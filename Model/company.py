@@ -1,7 +1,14 @@
-from pydantic import BaseModel, Field
+"""
+Modelační třídy pro partnera
+"""
+from ast import literal_eval
 from typing import Optional
+from pydantic import BaseModel, Field
 
 class CompanyIn(BaseModel):
+    """
+    Partner jako přijímaci parametr na API
+    """
     company_id: str = Field(description="ID Company", min_length=1)
     name: Optional[str] = Field(description="Company name")
     name_first: Optional[str] = Field(description="First name")
@@ -17,7 +24,35 @@ class CompanyIn(BaseModel):
     foundation_id: Optional[str] = Field(description="ID base")
     ico: Optional[str] = Field(description="ICO")
 
+    def get_json_attributes(self):
+        """
+        Vrací json atributy
+        """
+        attributes = [
+            "company_id",
+            "name",
+            "name_first",
+            "name_last",
+            "active",
+            "note",
+            "type_person",
+            "address",
+            "type_relationship",
+            "email",
+            "phone_number",
+            "alias",
+            "foundation_id",
+            "ico"
+        ]
+        json = {}
+        for attribute in attributes:
+            json[attribute] = literal_eval("self."+attribute)
+        return json
+
 class CompanyOut(BaseModel):
+    """
+    Partner jako odesílací parametr na API
+    """
     company_id: str = Field(description="ID Company", min_length=1)
     name: Optional[str] = Field(description="Company name")
     name_first: Optional[str] = Field(description="First name")

@@ -1,4 +1,6 @@
-# auth_dep.py
+"""
+Authentifikace uživatele a přihlášení na supabase
+"""
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -7,6 +9,9 @@ from supabase_client import supabase, get_user_client
 bearer_scheme = HTTPBearer(auto_error=False)
 
 class AuthContext:
+    """
+    Info o uživateli a Supabase klienta, který běží pro přihlášeného uživatele
+    """
     def __init__(self, user: dict, client):
         self.user = user
         self.client = client
@@ -15,8 +20,8 @@ async def get_auth_ctx(
     creds: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ) -> AuthContext:
     """
-    - ověří Bearer token
-    - vrátí user info + supabase klienta, který běží pod tímto uživatelem (RLS)
+    Ověří Bearer token
+    Vrátí user info + supabase klienta, který běží pod tímto uživatelem (RLS)
     """
     if creds is None or creds.scheme.lower() != "bearer":
         raise HTTPException(
@@ -40,8 +45,8 @@ async def get_auth_ctx(
 
         return AuthContext(user=user_dict, client=user_client)
 
-    except Exception:
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
-        )
+        ) from e
