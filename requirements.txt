@@ -3,3 +3,4 @@ uvicorn[standard]==0.38.0
 supabase==2.24.0
 python-dotenv==1.2.1
 pydantic[email]==2.12.4
+pycurl==7.45.7
