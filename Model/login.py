@@ -3,14 +3,14 @@ Modelační třídy pro přihlašování
 """
 from pydantic import BaseModel, EmailStr, Field
 
-class LoginRequest(BaseModel):
+class LoginIn(BaseModel):
     """
     Přijímací třída při přihlášení
     """
     email: EmailStr = Field(description="Email address", min_length=1)
     password: str = Field(description="Password", min_length=1)
 
-class LoginResponse(BaseModel):
+class LoginOut(BaseModel):
     """
     Odpovídací třída při přihlášení
     """
@@ -19,7 +19,7 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     user: dict = Field(description="User information")
 
-class RefreshResponce(BaseModel):
+class RefreshOut(BaseModel):
     """
     Odpovídací třída při refresh tokenu
     """

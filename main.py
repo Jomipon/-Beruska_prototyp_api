@@ -1,20 +1,29 @@
-from fastapi import FastAPI, HTTPException, status, Depends
+"""
+Hlavní metoda pro start aplikace
+"""
+from typing import List
+import os
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, status, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from Model.login import LoginRequest, LoginResponse, RefreshResponce
+from Model.login import LoginIn, LoginOut, RefreshOut
 from Model.store import ItemIn, ItemOut
 from Model.company import CompanyIn, CompanyOut
+from Model.setting import SettingsIn, SettingsOut
+from Model.weather import WeatherOut  
 from supabase_client import supabase
 from auth_dep import get_auth_ctx, AuthContext
-from typing import List
-from Endpoint.auth import login_endpoint, refresh_token_endpoint
+from Endpoint.auth_endpoint import login_endpoint, refresh_token_endpoint
+from Endpoint.weather_endpoint import get_weather_place_by_name_endpoint
+
 
 app = FastAPI(title="Beruška API", version="0.1.0")
 
-# Sem doplň adresu své Streamlit appky
-origins = [
-    "http://localhost:8501",                     # vývoj
-    "https://jomipon-beruska-prototyp.streamlit.app",         # produkční Streamlit
-]
+load_dotenv()
+
+api_access_url = os.environ.get("API_ACCESS_URL")
+
+origins = api_access_url
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,39 +33,76 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+#@app.middleware("http")
+async def fix_json_booleans(request: Request, call_next):
+    """
+    Ochrana True <> true a False <> false v příchozícch datech ve formě JSON
+    """
+    # Přečti původní body (jen jednou)
+    body_bytes = await request.body()
+    body_str = body_bytes.decode("utf-8")
+
+    # Pokud není JSON, jen předej dál
+    if not body_str.strip().startswith("{") and not body_str.strip().startswith("["):
+        return await call_next(request)
+
+    # Nahraď nevalidní Python boolean -> valid JSON boolean
+    # Pozor: Replace jen cele slova
+    fixed = (
+        body_str
+        .replace(": True", ": true")
+        .replace(": False", ": false")
+        .replace(": None", ": null")
+    )
+
+    print(f"{fixed=}")
+
+    # Vytvoř nový request stream s opraveným JSONem
+    request = Request(
+        scope=request.scope,
+        receive=lambda: {"type": "http.request", "body": fixed.encode("utf-8")}
+    )
+
+    # Pokračuj v běžném zpracování
+    response = await call_next(request)
+    return response
 
 @app.get("/health", tags=["Health"])
 async def health_check():
+    """
+    Test běhu api
+    """
     return {"status": "ok"}
 
 # ---------- AUTH ----------
-@app.post("/auth/login", response_model=LoginResponse, tags=["Auth"])
-async def login(payload: LoginRequest):
+@app.post("/auth/login", response_model=LoginOut, tags=["Auth"])
+async def login(payload: LoginIn):
     """
-    Přihlásí uživatele přes Supabase a vrátí access/refresh tokeny + základní info o userovi.
-    Streamlit pošle email+password sem, ne přímo do Supabase.
+    Přihlásí uživatele přes Supabase a vrátí access/refresh tokeny + základní info o uživateli.
     """
     return login_endpoint(supabase, payload)
 
-@app.get("/auth/refresh", tags=["Auth"], response_model=RefreshResponce)
+@app.get("/auth/refresh", tags=["Auth"], response_model=RefreshOut)
 async def refresh_token(refresh_token: str):
     """
     Obnova session z refresh tokenu (když access token expiruje).
-    Streamlit může zavolat, když dostane 401.
     """
     return refresh_token_endpoint(supabase, refresh_token)
 
-# Functions
+# ---------- Functions ----------
 @app.get("/create_owner_id", tags=["Functions"])
 async def get_create_owner_id(ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Zavolá funkci create_owner_id v Supabase, aby se připravila tabulka accounts
+    """
     client = ctx.client
     try:
-        resp = client.rpc("create_owner_id").execute()
-    except:
+        client.rpc("create_owner_id").execute()
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Function not found not found"
-            )
+            detail="Function not found not found"
+            ) from e
     return {"status": "ok"}
 
 # ---------- PROTECTED RESOURCES ----------
@@ -72,7 +118,7 @@ async def list_companies(ctx: AuthContext = Depends(get_auth_ctx)):
     try:
         resp = client.table("company").select("*").execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=e)
+        raise HTTPException(status_code=500, detail=e) from e
     return resp.data
 
 @app.get("/company/{id_company}", response_model=CompanyOut, tags=["Company"])
@@ -86,13 +132,86 @@ async def get_company(id_company, ctx: AuthContext = Depends(get_auth_ctx)):
     try:
         resp = client.table("company").select("*").filter("company_id", "eq", str(id_company)).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=e)
+        raise HTTPException(status_code=500, detail=e) from e
     if len(resp.data) == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Company with id '{id_company}' not found"
     )
     return resp.data[0]
+
+@app.post("/company", response_model=CompanyOut, tags=["Company"])
+async def create_company(company: CompanyIn, ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Vloží nového partnera
+    """
+    client = ctx.client
+    try:
+        id_company = company.company_id
+        resp = client.table("company").select("*").filter("company_id", "eq", str(id_company)).execute()
+        if len(resp.data) > 0:
+            raise HTTPException(status_code=500, detail="Company is exists")
+        print(f"{company=}")
+        client.from_("company").insert(company.model_dump()).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    try:
+        resp = client.table("company").select("*").filter("company_id", "eq", str(id_company)).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    if len(resp.data) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Company with id '{id_company}' not found"
+    )
+    return resp.data[0]
+
+@app.put("/company/{id_company}", response_model=CompanyOut, tags=["Company"])
+async def update_company(company: CompanyIn, ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Upraví uloženého partnera
+    """
+    client = ctx.client
+    #try:
+    id_company = company.company_id
+    print(f"{company.model_dump()=}")
+    client.from_("company").update(company.model_dump()).eq("company_id", id_company).execute()
+#except Exception as e:
+    #    raise HTTPException(status_code=500, detail=e) from e
+    try:
+        resp = client.table("company").select("*").filter("company_id", "eq", str(id_company)).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    if len(resp.data) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Company with id '{id_company}' not found"
+    )
+    return resp.data[0]
+
+@app.delete("/company/{id_company}", tags=["Company"])
+async def delete_company(id_company, ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Vrací detail jednoho partnera
+    """
+    client = ctx.client
+    try:
+        resp = client.table("company").select("*").filter("company_id", "eq", str(id_company)).execute()
+        if len(resp.data) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail = f"Company with id '{id_company}' not found")
+        resp = client.table("company").delete().filter("company_id", "eq", str(id_company)).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    
+    return {"status": "ok"}
 
 # ---------- STORE ----------
 @app.get("/items", response_model=List[ItemOut], tags=["Items"])
@@ -106,26 +225,185 @@ async def list_items(ctx: AuthContext = Depends(get_auth_ctx)):
     try:
         resp = client.table("item").select("*").execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=e)
+        raise HTTPException(status_code=500, detail=e) from e
     return resp.data
 
-
-@app.post("/item", status_code=201, response_model=List[ItemOut], tags=["Items"])
-async def create_item(item: ItemIn, ctx: AuthContext = Depends(get_auth_ctx)):
+@app.get("/item/{id_item}", response_model=ItemOut, tags=["Item"])
+async def get_item(id_item, ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Vrací detail jednoho sortimentu
+    """
     client = ctx.client
-    user = ctx.user
+    try:
+        resp = client.table("item").select("*").filter("item_id", "eq", str(id_item)).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    if len(resp.data) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Item with id '{id_item}' not found"
+    )
+    return resp.data[0]
 
-    # id uživatele – podle toho, co si v RLS používáš
-    user_id = user.get("id") or user.get("sub")
+@app.post("/item", status_code=201, response_model=ItemOut, tags=["Items"])
+async def create_item(item: ItemIn, ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Vytvoří nový sortiment
+    """
+    client = ctx.client
+    try:
+        id_item = item.item_id
+        resp = client.table("item").select("*").filter("item_id", "eq", str(id_item)).execute()
+        if len(resp.data) > 0:
+            raise HTTPException(status_code=500, detail="Item is exists")
+        print(f"{item=}")
+        client.from_("item").insert(item.model_dump()).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    try:
+        resp = client.table("item").select("*").filter("item_id", "eq", str(id_item)).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    if len(resp.data) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Item with id '{id_item}' not found"
+    )
+    return resp.data[0]
 
-    data = {
-        "name": item.name,
-        "description": item.description,
-        "owner_id": user_id,   # pokud máš RLS na auth.uid() = owner_id
-    }
+@app.put("/item/{id_item}", response_model=ItemOut, tags=["Item"])
+async def update_item(item: ItemIn, ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Upraví uloženého partnera
+    """
+    client = ctx.client
+    #try:
+    id_item = item.item_id
+    print(f"{item.model_dump()=}")
+    client.from_("item").update(item.model_dump()).eq("item_id", id_item).execute()
+#except Exception as e:
+    #    raise HTTPException(status_code=500, detail=e) from e
+    try:
+        resp = client.table("item").select("*").filter("item_id", "eq", str(id_item)).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    if len(resp.data) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Item with id '{id_item}' not found"
+    )
+    return resp.data[0]
 
-    resp = client.table("items").insert(data).execute()
-    if resp.error:
-        raise HTTPException(status_code=500, detail=resp.error.message)
-    return resp.data
+@app.delete("/item/{id_item}", tags=["Item"])
+async def delete_item(id_item, ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Vrací detail jednoho partnera
+    """
+    client = ctx.client
+    try:
+        resp = client.table("item").select("*").filter("item_id", "eq", str(id_item)).execute()
+        if len(resp.data) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail = f"Item with id '{id_item}' not found")
+        resp = client.table("item").delete().filter("item_id", "eq", str(id_item)).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    
+    return {"status": "ok"}
+
+
+@app.get("/settings", response_model=SettingsOut, tags=["Settings"])
+async def get_settings(ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Vrací nastavení uživatele
+    """
+    client = ctx.client
+    try:
+        resp = client.table("settings").select("*").execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    if len(resp.data) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Settings not found"
+    )
+    return resp.data[0]
+
+@app.put("/settings", response_model=SettingsOut, tags=["Settings"])
+async def update_settings(settings: SettingsIn, ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Upraví uložené nastavení uživatele
+    """
+    client = ctx.client
+    try:
+        settings_id = settings.settings_id
+        client.from_("settings").update(settings.model_dump()).filter("settings_id", "eq", settings_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    try:
+        resp = client.table("settings").select("*").execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    if len(resp.data) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Settings not found"
+        )
+    print(resp)
+    return resp.data[0]
+
+@app.get("/weather_place/{place_name}", response_model=WeatherOut, tags=["Weather"])
+async def get_weather_place_by_name(place_name, ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Vrací GPS souřadnice pro zadanou lokalitu
+    """
+    client = ctx.client
+    try:
+        weather_place = get_weather_place_by_name_endpoint(client, place_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    return weather_place
+
+@app.get("/test", tags=["Test"])
+async def get_test():
+    """
+    Test GET metody
+    """
+    return {"status": "ok"}
+@app.post("/test", tags=["Test"])
+async def post_test(post_data: dict):
+    """
+    Test POST metody
+    """
+    return post_data
+@app.put("/test", tags=["Test"])
+async def put_test(post_data: dict):
+    """
+    Test PUT metody
+    """
+    return post_data
+@app.delete("/test", tags=["Test"])
+async def delete_test(post_data: dict):
+    """
+    Test DELETE metody
+    """
+    return post_data
+
+
+
 
