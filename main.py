@@ -16,7 +16,6 @@ from auth_dep import get_auth_ctx, AuthContext
 from Endpoint.auth_endpoint import login_endpoint, refresh_token_endpoint
 from Endpoint.weather_endpoint import get_weather_place_by_name_endpoint
 
-
 app = FastAPI(title="Beruška API", version="0.1.0")
 
 load_dotenv()
@@ -32,30 +31,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 @app.get("/health", tags=["Health"])
 async def health_check():
     """
     Test běhu api
     """
     return {"status": "ok"}
-
-# ---------- AUTH ----------
 @app.post("/auth/login", response_model=LoginOut, tags=["Auth"])
 async def login(payload: LoginIn):
     """
     Přihlásí uživatele přes Supabase a vrátí access/refresh tokeny + základní info o uživateli.
     """
     return login_endpoint(supabase, payload)
-
 @app.get("/auth/refresh", tags=["Auth"], response_model=RefreshOut)
 async def refresh_token(refresh_token: str):
     """
     Obnova session z refresh tokenu (když access token expiruje).
     """
     return refresh_token_endpoint(supabase, refresh_token)
-
-# ---------- Functions ----------
 @app.get("/create_owner_id", tags=["Functions"])
 async def get_create_owner_id(ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -70,9 +63,6 @@ async def get_create_owner_id(ctx: AuthContext = Depends(get_auth_ctx)):
             detail="Function not found not found"
             ) from e
     return {"status": "ok"}
-
-# ---------- PROTECTED RESOURCES ----------
-# ---------- Common ----------
 @app.get("/companies", response_model=List[CompanyOut], tags=["Company"])
 async def list_companies(ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -86,7 +76,6 @@ async def list_companies(ctx: AuthContext = Depends(get_auth_ctx)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     return resp.data
-
 @app.get("/company/{id_company}", response_model=CompanyOut, tags=["Company"])
 async def get_company(id_company, ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -105,7 +94,6 @@ async def get_company(id_company, ctx: AuthContext = Depends(get_auth_ctx)):
             detail=f"Company with id '{id_company}' not found"
     )
     return resp.data[0]
-
 @app.post("/company", response_model=CompanyOut, tags=["Company"])
 async def create_company(company: CompanyIn, ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -132,7 +120,6 @@ async def create_company(company: CompanyIn, ctx: AuthContext = Depends(get_auth
         detail=f"Company with id '{id_company}' not found"
         )
     return resp.data[0]
-
 @app.put("/company/{id_company}", response_model=CompanyOut, tags=["Company"])
 async def update_company(company: CompanyIn, ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -141,12 +128,9 @@ async def update_company(company: CompanyIn, ctx: AuthContext = Depends(get_auth
     Upraví uloženého partnera
     """
     client = ctx.client
-    #try:
     id_company = company.company_id
     print(f"{company.model_dump()=}")
     client.from_("company").update(company.model_dump()).eq("company_id", id_company).execute()
-#except Exception as e:
-    #    raise HTTPException(status_code=500, detail=e) from e
     try:
         resp = client.table("company").select("*").filter("company_id", "eq", str(id_company)).execute()
     except Exception as e:
@@ -157,7 +141,6 @@ async def update_company(company: CompanyIn, ctx: AuthContext = Depends(get_auth
             detail=f"Company with id '{id_company}' not found"
     )
     return resp.data[0]
-
 @app.delete("/company/{id_company}", tags=["Company"])
 async def delete_company(id_company, ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -177,8 +160,6 @@ async def delete_company(id_company, ctx: AuthContext = Depends(get_auth_ctx)):
         raise HTTPException(status_code=500, detail=e) from e
     
     return {"status": "ok"}
-
-# ---------- STORE ----------
 @app.get("/items", response_model=List[ItemOut], tags=["Items"])
 async def list_items(ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -192,7 +173,6 @@ async def list_items(ctx: AuthContext = Depends(get_auth_ctx)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     return resp.data
-
 @app.get("/item/{id_item}", response_model=ItemOut, tags=["Item"])
 async def get_item(id_item, ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -211,7 +191,6 @@ async def get_item(id_item, ctx: AuthContext = Depends(get_auth_ctx)):
             detail=f"Item with id '{id_item}' not found"
     )
     return resp.data[0]
-
 @app.post("/item", status_code=201, response_model=ItemOut, tags=["Items"])
 async def create_item(item: ItemIn, ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -239,7 +218,6 @@ async def create_item(item: ItemIn, ctx: AuthContext = Depends(get_auth_ctx)):
             detail=f"Item with id '{id_item}' not found"
     )
     return resp.data[0]
-
 @app.put("/item/{id_item}", response_model=ItemOut, tags=["Item"])
 async def update_item(item: ItemIn, ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -264,7 +242,6 @@ async def update_item(item: ItemIn, ctx: AuthContext = Depends(get_auth_ctx)):
             detail=f"Item with id '{id_item}' not found"
     )
     return resp.data[0]
-
 @app.delete("/item/{id_item}", tags=["Item"])
 async def delete_item(id_item, ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -284,8 +261,6 @@ async def delete_item(id_item, ctx: AuthContext = Depends(get_auth_ctx)):
         raise HTTPException(status_code=500, detail=e) from e
     
     return {"status": "ok"}
-
-
 @app.get("/settings", response_model=SettingsOut, tags=["Settings"])
 async def get_settings(ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -304,7 +279,6 @@ async def get_settings(ctx: AuthContext = Depends(get_auth_ctx)):
             detail="Settings not found"
     )
     return resp.data[0]
-
 @app.put("/settings", response_model=SettingsOut, tags=["Settings"])
 async def update_settings(settings: SettingsIn, ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -329,7 +303,6 @@ async def update_settings(settings: SettingsIn, ctx: AuthContext = Depends(get_a
         )
     print(resp)
     return resp.data[0]
-
 @app.get("/weather_place/{place_name}", response_model=WeatherOut, tags=["Weather"])
 async def get_weather_place_by_name(place_name, ctx: AuthContext = Depends(get_auth_ctx)):
     """
@@ -343,7 +316,6 @@ async def get_weather_place_by_name(place_name, ctx: AuthContext = Depends(get_a
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     return weather_place
-
 @app.get("/test", tags=["Test"])
 async def get_test():
     """
@@ -368,7 +340,3 @@ async def delete_test(post_data: dict):
     Test DELETE metody
     """
     return post_data
-
-
-
-
