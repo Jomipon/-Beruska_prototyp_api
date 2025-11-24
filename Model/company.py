@@ -23,7 +23,6 @@ class CompanyIn(BaseModel):
     foundation_id: Optional[str] = Field(description="ID base", default=None)
     ico: Optional[str] = Field(description="ICO", default=None)
 
-
 class CompanyOut(BaseModel):
     """
     Partner jako odesílací parametr na API

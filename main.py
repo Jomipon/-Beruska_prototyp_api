@@ -33,40 +33,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-#@app.middleware("http")
-async def fix_json_booleans(request: Request, call_next):
-    """
-    Ochrana True <> true a False <> false v příchozícch datech ve formě JSON
-    """
-    # Přečti původní body (jen jednou)
-    body_bytes = await request.body()
-    body_str = body_bytes.decode("utf-8")
-
-    # Pokud není JSON, jen předej dál
-    if not body_str.strip().startswith("{") and not body_str.strip().startswith("["):
-        return await call_next(request)
-
-    # Nahraď nevalidní Python boolean -> valid JSON boolean
-    # Pozor: Replace jen cele slova
-    fixed = (
-        body_str
-        .replace(": True", ": true")
-        .replace(": False", ": false")
-        .replace(": None", ": null")
-    )
-
-    print(f"{fixed=}")
-
-    # Vytvoř nový request stream s opraveným JSONem
-    request = Request(
-        scope=request.scope,
-        receive=lambda: {"type": "http.request", "body": fixed.encode("utf-8")}
-    )
-
-    # Pokračuj v běžném zpracování
-    response = await call_next(request)
-    return response
-
 @app.get("/health", tags=["Health"])
 async def health_check():
     """
@@ -153,7 +119,6 @@ async def create_company(company: CompanyIn, ctx: AuthContext = Depends(get_auth
         resp = client.table("company").select("*").filter("company_id", "eq", str(id_company)).execute()
         if len(resp.data) > 0:
             raise HTTPException(status_code=500, detail="Company is exists")
-        print(f"{company=}")
         client.from_("company").insert(company.model_dump()).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
@@ -163,9 +128,9 @@ async def create_company(company: CompanyIn, ctx: AuthContext = Depends(get_auth
         raise HTTPException(status_code=500, detail=e) from e
     if len(resp.data) == 0:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Company with id '{id_company}' not found"
-    )
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Company with id '{id_company}' not found"
+        )
     return resp.data[0]
 
 @app.put("/company/{id_company}", response_model=CompanyOut, tags=["Company"])
