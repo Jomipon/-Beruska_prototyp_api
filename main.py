@@ -10,7 +10,7 @@ from Model.login import LoginIn, LoginOut, RefreshOut
 from Model.store import ItemIn, ItemOut
 from Model.company import CompanyIn, CompanyOut
 from Model.setting import SettingsIn, SettingsOut
-from Model.weather import WeatherOut  
+from Model.weather import WeatherOut
 from supabase_client import supabase
 from auth_dep import get_auth_ctx, AuthContext
 from Endpoint.auth_endpoint import login_endpoint, refresh_token_endpoint
