@@ -42,3 +42,4 @@ class CompanyOut(BaseModel):
     alias: Optional[str] = Field(description="Nock name")
     foundation_id: Optional[str] = Field(description="ID base")
     ico: Optional[str] = Field(description="ICO")
+    name_full: Optional[str] = Field(description="Full company name")

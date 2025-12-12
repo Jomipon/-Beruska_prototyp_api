@@ -6,14 +6,17 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+import numpy as np
+import pandas as pd
 from Model.login import LoginIn, LoginOut, RefreshOut
-from Model.store import ItemIn, ItemOut
+from Model.store import ItemIn, ItemOut, IssueOut, IssueIn, IssueOutEnvelope
 from Model.company import CompanyIn, CompanyOut
 from Model.setting import SettingsIn, SettingsOut
 from Model.weather import WeatherOut
 from supabase_client import supabase
 from auth_dep import get_auth_ctx, AuthContext
 from Endpoint.auth_endpoint import login_endpoint, refresh_token_endpoint
+from Endpoint.issue_endpoint import create_issue_endpoint
 from Endpoint.weather_endpoint import get_weather_place_by_name_endpoint
 
 app = FastAPI(title="Beruška API", version="0.1.0")
@@ -63,7 +66,23 @@ async def get_create_owner_id(ctx: AuthContext = Depends(get_auth_ctx)):
             detail="Function not found not found"
             ) from e
     return {"status": "ok"}
-@app.get("/companies", response_model=List[CompanyOut], tags=["Company"])
+
+@app.get("/create_issue_from_pre", tags=["Functions"])
+async def get_create_issue_from_pre(id_pre: str, ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Zavolá funkci create_issue_from_pre v Supabase, která překlopí data z pre tabulky
+    """
+    client = ctx.client
+    try:
+        client.rpc("create_issue_from_pre", params={"p_id_pre": id_pre}).execute()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Function create_issue_from_pre not found"
+            ) from e
+    return {"status": "ok"}
+
+@app.get("/companies", tags=["Company"]) #response_model=List[CompanyOut]
 async def list_companies(ctx: AuthContext = Depends(get_auth_ctx)):
     """
     Vždy vyžaduje platný Bearer token.
@@ -72,7 +91,7 @@ async def list_companies(ctx: AuthContext = Depends(get_auth_ctx)):
     """
     client = ctx.client
     try:
-        resp = client.table("company").select("*").execute()
+        resp = client.from_("company_fullname").select("*").execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     return resp.data
@@ -85,7 +104,7 @@ async def get_company(id_company, ctx: AuthContext = Depends(get_auth_ctx)):
     """
     client = ctx.client
     try:
-        resp = client.table("company").select("*").filter("company_id", "eq", str(id_company)).execute()
+        resp = client.from_("company_fullname").select("*").filter("company_id", "eq", str(id_company)).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     if len(resp.data) == 0:
@@ -104,14 +123,14 @@ async def create_company(company: CompanyIn, ctx: AuthContext = Depends(get_auth
     client = ctx.client
     try:
         id_company = company.company_id
-        resp = client.table("company").select("*").filter("company_id", "eq", str(id_company)).execute()
+        resp = client.from_("company").select("*").filter("company_id", "eq", str(id_company)).execute()
         if len(resp.data) > 0:
             raise HTTPException(status_code=500, detail="Company is exists")
         client.from_("company").insert(company.model_dump()).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     try:
-        resp = client.table("company").select("*").filter("company_id", "eq", str(id_company)).execute()
+        resp = client.from_("company").select("*").filter("company_id", "eq", str(id_company)).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     if len(resp.data) == 0:
@@ -129,10 +148,10 @@ async def update_company(company: CompanyIn, ctx: AuthContext = Depends(get_auth
     """
     client = ctx.client
     id_company = company.company_id
-    print(f"{company.model_dump()=}")
+    #print(f"{company.model_dump()=}")
     client.from_("company").update(company.model_dump()).eq("company_id", id_company).execute()
     try:
-        resp = client.table("company").select("*").filter("company_id", "eq", str(id_company)).execute()
+        resp = client.from_("company_fullname").select("*").filter("company_id", "eq", str(id_company)).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     if len(resp.data) == 0:
@@ -150,12 +169,12 @@ async def delete_company(id_company, ctx: AuthContext = Depends(get_auth_ctx)):
     """
     client = ctx.client
     try:
-        resp = client.table("company").select("*").filter("company_id", "eq", str(id_company)).execute()
+        resp = client.from_("company").select("*").filter("company_id", "eq", str(id_company)).execute()
         if len(resp.data) == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail = f"Company with id '{id_company}' not found")
-        resp = client.table("company").delete().filter("company_id", "eq", str(id_company)).execute()
+        resp = client.from_("company").delete().filter("company_id", "eq", str(id_company)).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     
@@ -169,7 +188,7 @@ async def list_items(ctx: AuthContext = Depends(get_auth_ctx)):
     """
     client = ctx.client
     try:
-        resp = client.table("item").select("*").execute()
+        resp = client.from_("item").select("*").execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     return resp.data
@@ -182,7 +201,7 @@ async def get_item(id_item, ctx: AuthContext = Depends(get_auth_ctx)):
     """
     client = ctx.client
     try:
-        resp = client.table("item").select("*").filter("item_id", "eq", str(id_item)).execute()
+        resp = client.from_("item").select("*").filter("item_id", "eq", str(id_item)).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     if len(resp.data) == 0:
@@ -201,7 +220,7 @@ async def create_item(item: ItemIn, ctx: AuthContext = Depends(get_auth_ctx)):
     client = ctx.client
     try:
         id_item = item.item_id
-        resp = client.table("item").select("*").filter("item_id", "eq", str(id_item)).execute()
+        resp = client.from_("item").select("*").filter("item_id", "eq", str(id_item)).execute()
         if len(resp.data) > 0:
             raise HTTPException(status_code=500, detail="Item is exists")
         print(f"{item=}")
@@ -209,7 +228,7 @@ async def create_item(item: ItemIn, ctx: AuthContext = Depends(get_auth_ctx)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     try:
-        resp = client.table("item").select("*").filter("item_id", "eq", str(id_item)).execute()
+        resp = client.from_("item").select("*").filter("item_id", "eq", str(id_item)).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     if len(resp.data) == 0:
@@ -233,7 +252,7 @@ async def update_item(item: ItemIn, ctx: AuthContext = Depends(get_auth_ctx)):
 #except Exception as e:
     #    raise HTTPException(status_code=500, detail=e) from e
     try:
-        resp = client.table("item").select("*").filter("item_id", "eq", str(id_item)).execute()
+        resp = client.from_("item").select("*").filter("item_id", "eq", str(id_item)).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     if len(resp.data) == 0:
@@ -251,12 +270,12 @@ async def delete_item(id_item, ctx: AuthContext = Depends(get_auth_ctx)):
     """
     client = ctx.client
     try:
-        resp = client.table("item").select("*").filter("item_id", "eq", str(id_item)).execute()
+        resp = client.from_("item").select("*").filter("item_id", "eq", str(id_item)).execute()
         if len(resp.data) == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail = f"Item with id '{id_item}' not found")
-        resp = client.table("item").delete().filter("item_id", "eq", str(id_item)).execute()
+        resp = client.from_("item").delete().filter("item_id", "eq", str(id_item)).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     
@@ -270,7 +289,7 @@ async def get_settings(ctx: AuthContext = Depends(get_auth_ctx)):
     """
     client = ctx.client
     try:
-        resp = client.table("settings").select("*").execute()
+        resp = client.from_("settings").select("*").execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     if len(resp.data) == 0:
@@ -293,7 +312,7 @@ async def update_settings(settings: SettingsIn, ctx: AuthContext = Depends(get_a
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     try:
-        resp = client.table("settings").select("*").execute()
+        resp = client.from_("settings").select("*").execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     if len(resp.data) == 0:
@@ -316,6 +335,78 @@ async def get_weather_place_by_name(place_name, ctx: AuthContext = Depends(get_a
     except Exception as e:
         raise HTTPException(status_code=500, detail=e) from e
     return weather_place
+@app.get("/issues", tags=["Issue"]) #response_model=List[IssueOut]
+async def get_issues(ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Vrací seznam všech výdejek (pouze hlavičky)
+    """
+    client = ctx.client
+    try:
+        #resp = client.from_("issue_head").select("*").execute()
+        #resp = client.from_("issue_detail").select("*, issue_head(*)").execute()
+        #resp = client.from_("issue_detail").select("*, issue_head(*)").execute()
+        #resp = client.from_("issue_head").select("""  *,  start_scan:scans!scan_id_start (    id,    user_id,    badge_scan_time  ),  end_scan:scans!scan_id_end (    id,    user_id,    badge_scan_time  )""").execute()
+        #resp = client.from_("issue_head").select("*, company(*)").execute()
+        resp = client.from_("issue_head").select("*").execute()
+        for issue in resp.data:
+            if issue["company_id"]:
+                company_detail = client.from_("company_fullname").select("*").filter("company_id", "eq", issue["company_id"]).execute()
+                if company_detail.data:
+                    issue["company_fullname"] = company_detail.data[0]["name_full"]
+                else:
+                    issue["company_fullname"] = ""
+    except Exception as e:
+        print(f"{e=}")
+        raise HTTPException(status_code=500, detail=e) from e
+    #return resp.data
+    return {"row_count": len(resp.data), "data": resp.data}
+#@app.get("/issue/{id_item}", tags=["Issue"]) # response_model=IssueOut
+@app.get("/issue/{issue_id}", response_model=IssueOutEnvelope, tags=["Issue"]) # response_model=IssueOut
+async def get_issue(issue_id, ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Vrací detail jedné výdejky (hlavičku i detail)
+    """
+    client = ctx.client
+    try:
+        resp = client.from_("issue_head").select("*").filter("issue_id", "eq", str(issue_id)).execute()
+        if len(resp.data) == 0:
+            return {"status": "NO_HEAD_DATA", "data": None}
+        detail = client.from_("issue_detail").select("*, item(*)").filter("issue_id", "eq", str(issue_id)).execute()
+        if len(detail.data) == 0:
+            return {"status": "NO_DETAIL_DATA", "data": None}
+        rows_detail = []
+        for row_detail in detail.data:
+            if row_detail["item_id"]:
+                item_row = client.from_("item").select("*").filter("item_id", "eq", row_detail["item_id"]).execute()
+                rows_detail.append(item_row)
+        resp.data[0]["issueDetail"] = detail.data
+        company = client.from_("company_fullname").select("*").filter("company_id", "eq", resp.data[0]["company_id"]).execute()
+        if company.data:
+            resp.data[0]["company"] = company.data[0]
+        else:
+            resp.data[0]["company"] = None
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    return {"status": "OK", "data": resp.data[0]}
+@app.post("/issue", status_code=201, tags=["Issue"]) #response_model=IssueOut
+async def create_issue(issue: IssueIn, ctx: AuthContext = Depends(get_auth_ctx)):
+    """
+    Vždy vyžaduje platný Bearer token.
+    ctx.client má nastavený access_token, takže RLS běží jako konkrétní uživatel.
+    Vytvoří novou výdejku
+    """
+    client = ctx.client
+    try:
+        issue_insert = create_issue_endpoint(client, issue)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=e) from e
+    print(f"{issue_insert=}")
+    return issue_insert
 @app.get("/test", tags=["Test"])
 async def get_test():
     """
@@ -340,3 +431,13 @@ async def delete_test(post_data: dict):
     Test DELETE metody
     """
     return post_data
+
+
+@app.get("/movies", tags=["Test"])
+async def get_test_references(ctx: AuthContext = Depends(get_auth_ctx)):
+    client = ctx.client
+    #resp = client.from_("performances").select("knu:id, *").execute()
+    #resp = client.from_("performances").select("*, actors(*)").execute()
+    resp = client.from_("performances").select("knu:id, act:actors(actor_id:id, *), movies(*)").execute()
+
+    return resp
